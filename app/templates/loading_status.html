@@ -75,10 +75,11 @@
                     
                     <!-- Time estimation from backend calculations -->
                     {% if task.get('processing_rate_formatted') and task.get('estimated_time_remaining') %}
-                        <div class="text-center mb-3">
-                            <p class="text-muted">
-                                Processing rate: {{ task.get('processing_rate_formatted') }}<br>
-                                Estimated time remaining: {{ task.get('estimated_time_remaining') }}
+                        <div class="alert alert-light">
+                            <h5 class="mb-2">Processing Information:</h5>
+                            <p class="mb-2">
+                                <strong>Processing rate:</strong> {{ task.get('processing_rate_formatted') }}<br>
+                                <strong>Estimated time remaining:</strong> {{ task.get('estimated_time_remaining') }}
                             </p>
                         </div>
                     {% endif %}
@@ -91,7 +92,7 @@
                     <p class="mb-2">{{ task.get('phase_description', 'Initializing...') }}</p>
                     
                     {% if task.get('elapsed_time_formatted') %}
-                        <p class="text-muted">Elapsed time: {{ task.get('elapsed_time_formatted') }}</p>
+                        <p class="mb-0"><strong>Elapsed time:</strong> {{ task.get('elapsed_time_formatted') }}</p>
                     {% endif %}
                 </div>
             {% endif %}

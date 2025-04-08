@@ -1,0 +1,56 @@
+{% extends 'base.html' %}
+
+{% block title %}AMTA - Dashboard{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row">
+        <div class="col-12 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h2>Welcome, {{ current_user.username }}!</h2>
+                </div>
+                <div class="card-body">
+                    <p>This is your personal dashboard for the AMTA - Automatic Material Takeoff Analyzer.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Upload New IFC File</h3>
+                </div>
+                <div class="card-body">
+                    <form id="uploadForm" action="{{ url_for('main.upload_file') }}" method="post" enctype="multipart/form-data">
+                        <div class="mb-3">
+                            <label for="file" class="form-label">Select IFC File</label>
+                            <input class="form-control" type="file" id="file" name="file" accept=".ifc" required>
+                            <div class="form-text">Supported format: IFC2X3 (.ifc files)</div>
+                        </div>
+                        
+                        <div class="d-grid">
+                            <button type="submit" class="btn btn-primary">Upload and Analyze</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h3>Your Account</h3>
+                </div>
+                <div class="card-body">
+                    <p><strong>Username:</strong> {{ current_user.username }}</p>
+                    <p><strong>Email:</strong> {{ current_user.email }}</p>
+                    <p>You can upload and analyze IFC files to generate detailed material takeoff reports.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

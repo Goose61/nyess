@@ -1,26 +1,26 @@
 {% extends 'base.html' %}
 
-{% block title %}
-    Bad Request - IFC Analyzer
-{% endblock %}
+{% block title %}AMTA - Bad Request{% endblock %}
 
 {% block content %}
-<div class="container mt-5">
-    <div class="row">
-        <div class="col-md-8 offset-md-2">
-            <div class="card border-danger">
-                <div class="card-header bg-danger text-white">
-                    <h2><i class="fas fa-exclamation-triangle"></i> Bad Request (400)</h2>
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h2>400 - Bad Request</h2>
                 </div>
-                <div class="card-body">
-                    <p class="lead">The request was malformed or contains invalid parameters.</p>
-                    <p>Please check your request and try again.</p>
-                    <hr>
-                    <div class="text-center mt-4">
-                        <a href="{{ url_for('main.index') }}" class="btn btn-primary">
-                            <i class="fas fa-home"></i> Return to Home
-                        </a>
+                <div class="card-body text-center">
+                    <div class="mb-4">
+                        <i class="bi bi-exclamation-triangle" style="font-size: 5rem; color: #dc3545;"></i>
                     </div>
+                    <h3 class="mb-3">Something went wrong with your request</h3>
+                    <p class="lead mb-4">
+                        The server could not understand the request due to invalid syntax or missing parameters. Please check your request and try again.
+                    </p>
+                    <a href="{{ url_for('main.index') }}" class="btn btn-primary btn-lg">
+                        <i class="bi bi-house-door"></i> Return to Home
+                    </a>
                 </div>
             </div>
         </div>

@@ -1,0 +1,8 @@
+Element Type,Count,Total Volume (m³),Total Area (m²),Materials
+IfcBeam,3027,72.18,1532.79,"STEEL/A36, STEEL/A53, STEEL/A53-GR.B"
+IfcReinforcingBar,180,63.22,90.31,A615-60
+IfcColumn,488,11.46,223.59,"STEEL/A53, STEEL/A53-GR.B, CONCRETE/3500"
+IfcFooting,20,22.66,167.04,CONCRETE/3500
+IfcMember,272,267.25,249.97,"STEEL/A36, STEEL/A53"
+IfcPlate,180,0.39,16.44,"STEEL/A53, STEEL/300W"
+IfcMechanicalFastener,656,0.79,33.15,Undefined

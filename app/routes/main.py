@@ -9,6 +9,7 @@ from flask import (
     Blueprint, flash, redirect, render_template, request, 
     url_for, current_app, send_from_directory, jsonify, session, copy_current_request_context
 )
+from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from app.models.material_takeoff import MaterialTakeoffAnalyzer
 from flask import current_app as app
@@ -27,12 +28,28 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
 
+@bp.route('/favicon.ico')
+def favicon():
+    """Serve the favicon directly."""
+    return send_from_directory(
+        os.path.join(current_app.root_path, 'static'),
+        'favicon.ico', 
+        mimetype='image/vnd.microsoft.icon'
+    )
+
 @bp.route('/')
 def index():
     """Render the home page."""
     return render_template('index.html')
 
+@bp.route('/dashboard')
+@login_required
+def dashboard():
+    """Render the dashboard page."""
+    return render_template('dashboard.html')
+
 @bp.route('/upload', methods=['POST'])
+@login_required
 def upload_file():
     """Handle file upload."""
     try:
@@ -83,6 +100,7 @@ def upload_file():
         return redirect(url_for('main.index'))
 
 @bp.route('/loading/<filename>')
+@login_required
 def loading(filename):
     """Show loading page and start analysis in background."""
     try:
@@ -448,6 +466,7 @@ def analyze_file_task(filename, upload_folder, app):
                 del threads[filename]
 
 @bp.route('/analyze/<filename>')
+@login_required
 def analyze(filename):
     """View the analysis results for a file."""
     try:
@@ -604,6 +623,7 @@ def analyze(filename):
         return redirect(url_for('main.index'))
 
 @bp.route('/download/<filename>')
+@login_required
 def download_file(filename):
     """Download a file."""
     try:

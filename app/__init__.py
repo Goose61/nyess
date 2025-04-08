@@ -1,6 +1,7 @@
 import os
 from flask import Flask, render_template
 from flask_cors import CORS
+from flask_login import LoginManager
 
 def create_app(test_config=None):
     """Create and configure the Flask application."""
@@ -53,12 +54,32 @@ def create_app(test_config=None):
     # ensure the upload folder exists
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
+    
+    # Initialize the login manager
+    login_manager = LoginManager()
+    login_manager.login_view = 'auth.login'
+    login_manager.login_message = 'Please log in to access this page.'
+    login_manager.login_message_category = 'warning'
+    login_manager.init_app(app)
+    
+    # Import and initialize User model
+    from app.models.user import User
+    User.init_db()
+    
+    @login_manager.user_loader
+    def load_user(user_id):
+        # Load the user from the database
+        return User.get_by_id(int(user_id))
 
     # Register blueprints
     from app.routes import main, api, errors
     app.register_blueprint(main.bp)
     app.register_blueprint(api.bp)
     app.register_blueprint(errors.bp)
+    
+    # Register auth blueprint
+    from app.routes import auth
+    app.register_blueprint(auth.bp)
 
     # Register error handlers
     from app.routes.errors import not_found_error, internal_error, forbidden_error, too_large_error, bad_request_error
