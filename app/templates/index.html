@@ -29,7 +29,16 @@
     <div class="container">
         <h2 class="text-center mb-5">Key Features</h2>
         <div class="row">
-            <div class="col-md-4 mb-4">
+            <div class="col-md-3 mb-4">
+                <div class="card h-100">
+                    <div class="card-body">
+                        <h3>2D Floor Plan Analyzer</h3>
+                        <p>Convert floor plan images to analyzed spaces, walls, doors, and windows using advanced OCR technology.</p>
+                        <a href="{{ url_for('ocr_viewer.viewer') }}" class="btn btn-primary mt-3">Try Now</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 mb-4">
                 <div class="card h-100">
                     <div class="card-body">
                         <h3>Material Takeoff</h3>
@@ -37,7 +46,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4 mb-4">
+            <div class="col-md-3 mb-4">
                 <div class="card h-100">
                     <div class="card-body">
                         <h3>Interactive Visualization</h3>
@@ -45,7 +54,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4 mb-4">
+            <div class="col-md-3 mb-4">
                 <div class="card h-100">
                     <div class="card-body">
                         <h3>Export Options</h3>
@@ -65,7 +74,7 @@
             <div class="card h-100">
                 <div class="card-body">
                     <h3>1. Upload</h3>
-                    <p>Upload your IFC model through our secure interface.</p>
+                    <p>Upload your IFC model or floor plan image through our secure interface.</p>
                 </div>
             </div>
         </div>
@@ -73,7 +82,7 @@
             <div class="card h-100">
                 <div class="card-body">
                     <h3>2. Process</h3>
-                    <p>Our system automatically analyzes all elements and materials.</p>
+                    <p>Our system automatically analyzes all elements, spaces, and materials.</p>
                 </div>
             </div>
         </div>
@@ -81,16 +90,17 @@
             <div class="card h-100">
                 <div class="card-body">
                     <h3>3. Results</h3>
-                    <p>Get comprehensive reports and visualizations of your material takeoffs.</p>
+                    <p>Get comprehensive reports and visualizations of your analysis.</p>
                 </div>
             </div>
         </div>
     </div>
     <div class="text-center mt-4">
+        <a href="{{ url_for('ocr_viewer.viewer') }}" class="btn btn-primary btn-lg me-3">Try Floor Plan Analyzer</a>
         {% if current_user.is_authenticated %}
-        <a href="{{ url_for('main.dashboard') }}" class="btn btn-primary btn-lg">Start Analyzing</a>
+        <a href="{{ url_for('main.dashboard') }}" class="btn btn-outline-primary btn-lg">Go to Dashboard</a>
         {% else %}
-        <a href="{{ url_for('auth.register') }}" class="btn btn-primary btn-lg">Get Started</a>
+        <a href="{{ url_for('auth.register') }}" class="btn btn-outline-primary btn-lg">Register</a>
         {% endif %}
     </div>
 </section>
@@ -109,6 +119,10 @@
                         <li>Enable measurement tools for distances, areas, and angles</li>
                         <li>Add PDF floor plan support</li>
                     </ul>
+                    <div class="timeline-status completed">
+                        <span class="badge bg-success">Available Now</span>
+                        <a href="{{ url_for('ocr_viewer.viewer') }}" class="btn btn-sm btn-primary">Try 2D Floor Plan Analyzer</a>
+                    </div>
                 </div>
             </div>
             <div class="timeline-item">

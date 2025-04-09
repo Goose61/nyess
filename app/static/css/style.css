@@ -405,4 +405,31 @@ footer {
 
 .timeline-content ul li {
     margin-bottom: 0.5rem;
+}
+
+.timeline-status {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background-color: var(--grey-bg);
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.timeline-status .badge {
+    font-size: 0.8rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 4px;
+}
+
+.timeline-status .btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.8rem;
+}
+
+.completed {
+    border-left: 4px solid #28a745;
 } 

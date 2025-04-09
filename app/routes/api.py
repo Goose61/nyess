@@ -30,6 +30,11 @@ def get_analysis_status(filename):
         # Sanitize filename to prevent path traversal
         filename = secure_filename(filename)
         
+        # Log important information for debugging
+        current_app.logger.info(f"Checking status for file: {filename}")
+        current_app.logger.info(f"Upload folder: {current_app.config['UPLOAD_FOLDER']}")
+        current_app.logger.info(f"Results folder: {current_app.config.get('RESULTS_FOLDER')}")
+        
         # Check if the analysis task exists
         if filename not in analysis_tasks:
             # No task found - create a pending task instead of showing an error
@@ -56,140 +61,9 @@ def get_analysis_status(filename):
         
         # Get the task status
         task = analysis_tasks[filename]
+        current_app.logger.info(f"Task status for {filename}: {task['status']}")
         
         if task['status'] == 'completed':
-            # Log for debugging
-            current_app.logger.info(f"Checking completed task for {filename}, results: {task.get('results', {})}")
-            
-            # Get results information from the task
-            results = task.get('results', {})
-            
-            # Get upload and results folder paths
-            upload_folder = current_app.config['UPLOAD_FOLDER']
-            results_folder = current_app.config.get('RESULTS_FOLDER', upload_folder)
-            
-            # Check the output directory from results first
-            output_dir = results.get('output_dir', results_folder)
-            
-            # List of directories to check for result files
-            directories_to_check = [
-                output_dir,
-                results_folder,
-                upload_folder
-            ]
-            
-            if results:
-                # Use the result filenames from the task instead of constructing new ones
-                json_file = results.get('json_file', f"{os.path.splitext(filename)[0]}_material_takeoff.json")
-                
-                # Log checking paths
-                current_app.logger.info(f"Looking for result files in directories: {directories_to_check}")
-                
-                # Try to find JSON file in any of the directories
-                json_path_found = None
-                for directory in directories_to_check:
-                    json_path = os.path.join(directory, json_file)
-                    current_app.logger.info(f"Checking for JSON file at: {json_path}")
-                    
-                    if os.path.exists(json_path):
-                        json_path_found = json_path
-                        current_app.logger.info(f"Found JSON file at: {json_path}")
-                        break
-                
-                if not json_path_found:
-                    current_app.logger.error(f"JSON file not found in any directory")
-                    
-                    # Try to find any matching JSON file in any directory
-                    base_name = os.path.splitext(filename)[0]
-                    
-                    for directory in directories_to_check:
-                        try:
-                            dir_files = os.listdir(directory)
-                            current_app.logger.info(f"Files in {directory}: {dir_files}")
-                            
-                            potential_files = [f for f in dir_files if f.startswith(base_name) and f.endswith('.json')]
-                            if potential_files:
-                                json_file = potential_files[0]
-                                json_path_found = os.path.join(directory, json_file)
-                                current_app.logger.info(f"Found alternative JSON file: {json_path_found}")
-                                
-                                # Update the results dictionary
-                                task['results']['json_file'] = json_file
-                                task['results']['output_dir'] = directory
-                                break
-                        except Exception as e:
-                            current_app.logger.error(f"Error listing files in {directory}: {str(e)}")
-                
-                # If no JSON file found in any directory, mark task as failed
-                if not json_path_found:
-                    task['status'] = 'failed'
-                    task['error'] = 'Result files are missing. Please try analyzing the file again.'
-                    return jsonify({
-                        'status': 'failed',
-                        'error': 'Result files are missing. Please try analyzing the file again.',
-                        'html': render_template('loading_status.html', 
-                                              status='failed',
-                                              task=task,
-                                              filename=filename)
-                    })
-            else:
-                # No results info stored in the task
-                current_app.logger.error(f"No results data found in task for {filename}")
-                
-                # Try to find result files using default naming pattern
-                base_name = os.path.splitext(filename)[0]
-                json_file = f"{base_name}_material_takeoff.json"
-                
-                json_path_found = None
-                for directory in directories_to_check:
-                    json_path = os.path.join(directory, json_file)
-                    if os.path.exists(json_path):
-                        json_path_found = json_path
-                        current_app.logger.info(f"Found JSON file with default naming: {json_path}")
-                        
-                        # Initialize results dictionary
-                        task['results'] = {
-                            'json_file': json_file,
-                            'output_dir': directory
-                        }
-                        break
-                
-                if not json_path_found:
-                    # Try to find any JSON file with the base_name
-                    for directory in directories_to_check:
-                        try:
-                            dir_files = os.listdir(directory)
-                            potential_files = [f for f in dir_files if f.startswith(base_name) and f.endswith('.json')]
-                            
-                            if potential_files:
-                                json_file = potential_files[0]
-                                json_path_found = os.path.join(directory, json_file)
-                                current_app.logger.info(f"Found alternative JSON file: {json_path_found}")
-                                
-                                # Initialize results dictionary
-                                task['results'] = {
-                                    'json_file': json_file,
-                                    'output_dir': directory
-                                }
-                                break
-                        except Exception as e:
-                            current_app.logger.error(f"Error listing files in {directory}: {str(e)}")
-                
-                # If still not found, mark as failed
-                if not json_path_found:
-                    task['status'] = 'failed'
-                    task['error'] = 'Result files are missing. Please try analyzing the file again.'
-                    current_app.logger.error(f"No JSON file found in any directory with any naming pattern")
-                    return jsonify({
-                        'status': 'failed',
-                        'error': 'Result files are missing. Please try analyzing the file again.',
-                        'html': render_template('loading_status.html', 
-                                              status='failed',
-                                              task=task,
-                                              filename=filename)
-                    })
-            
-            # Analysis complete and files exist
             # Set redirect URL
             task['redirect_url'] = url_for('main.analyze', filename=filename)
             
@@ -198,9 +72,6 @@ def get_analysis_status(filename):
                 'redirect_url': url_for('main.analyze', filename=filename),
                 'total_elements': task.get('total_elements', 0),
                 'processed_elements': task.get('total_elements', 0),
-                'phase': task.get('phase', 'complete'),
-                'phase_description': task.get('phase_description', 'Analysis complete'),
-                'total_analysis_time': task.get('total_analysis_time', 0),
                 'html': render_template('loading_status.html', 
                                       status='completed',
                                       task=task,

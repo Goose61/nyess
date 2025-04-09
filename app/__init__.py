@@ -21,8 +21,8 @@ def create_app(test_config=None):
         username = os.path.basename(os.path.expanduser('~'))
         app.config.from_mapping(
             SECRET_KEY='dev',
-            UPLOAD_FOLDER=os.path.join('/home', username, 'ifc_uploads'),
-            RESULTS_FOLDER=os.path.join('/home', username, 'ifc_results'),
+            UPLOAD_FOLDER=os.path.join('/home', username, 'nyess', 'ifc_uploads'),
+            RESULTS_FOLDER=os.path.join('/home', username, 'nyess', 'ifc_results'),
             ALLOWED_EXTENSIONS={'ifc'},
             MAX_CONTENT_LENGTH=100 * 1024 * 1024,  # 100MB max upload
             IS_PYTHONANYWHERE=True
@@ -55,6 +55,9 @@ def create_app(test_config=None):
     os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     os.makedirs(app.config['RESULTS_FOLDER'], exist_ok=True)
     
+    # ensure the temp directory exists for ocr_viewer
+    os.makedirs(os.path.join(os.getcwd(), 'temp'), exist_ok=True)
+    
     # Initialize the login manager
     login_manager = LoginManager()
     login_manager.login_view = 'auth.login'
@@ -80,6 +83,10 @@ def create_app(test_config=None):
     # Register auth blueprint
     from app.routes import auth
     app.register_blueprint(auth.bp)
+
+    # Register ocr_viewer blueprint
+    from app.views.ocr_viewer import ocr_viewer
+    app.register_blueprint(ocr_viewer)
 
     # Register error handlers
     from app.routes.errors import not_found_error, internal_error, forbidden_error, too_large_error, bad_request_error

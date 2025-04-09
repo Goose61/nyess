@@ -473,22 +473,32 @@ def analyze(filename):
         # Sanitize filename to prevent path traversal
         filename = os.path.basename(filename)
         
+        # Debug info - log all important paths
+        current_app.logger.info(f"Analyze route called for file: {filename}")
+        current_app.logger.info(f"Upload folder config: {current_app.config['UPLOAD_FOLDER']}")
+        current_app.logger.info(f"Results folder config: {current_app.config.get('RESULTS_FOLDER')}")
+        current_app.logger.info(f"PythonAnywhere: {current_app.config.get('IS_PYTHONANYWHERE', False)}")
+        
         # Check if the analysis task exists
         if filename not in analysis_tasks:
+            current_app.logger.warning(f"Analysis task not found for {filename}. Available tasks: {list(analysis_tasks.keys())}")
             flash('Analysis task not found. Please try uploading and analyzing the file again.')
             return redirect(url_for('main.index'))
         
         # Get the task status
         task = analysis_tasks[filename]
         status = task.get('status', 'unknown')
+        current_app.logger.info(f"Analysis status for {filename}: {status}")
         
         if status == 'failed':
             error = task.get('error', 'Unknown error')
+            current_app.logger.error(f"Analysis failed for {filename}: {error}")
             flash(f'Analysis failed: {error}')
             return redirect(url_for('main.index'))
         
         if status == 'running':
             # Redirect to loading page if still running
+            current_app.logger.info(f"Analysis still running for {filename}, redirecting to loading page")
             return redirect(url_for('main.loading', filename=filename))
         
         if status == 'completed':
@@ -676,4 +686,53 @@ def download_file(filename):
     except Exception as e:
         current_app.logger.error(f"Error downloading file: {filename} - {str(e)}\n{traceback.format_exc()}")
         flash(f'Error downloading file: {str(e)}')
-        return redirect(url_for('main.index')) 
+        return redirect(url_for('main.index'))
+
+@bp.route('/test_paths')
+def test_paths():
+    """Test route to verify directory paths."""
+    # Get configured paths
+    upload_folder = current_app.config['UPLOAD_FOLDER']
+    results_folder = current_app.config.get('RESULTS_FOLDER', upload_folder)
+    is_pythonanywhere = current_app.config.get('IS_PYTHONANYWHERE', False)
+    
+    # Log paths for verification
+    current_app.logger.info(f"Upload folder: {upload_folder}")
+    current_app.logger.info(f"Results folder: {results_folder}")
+    current_app.logger.info(f"IS_PYTHONANYWHERE: {is_pythonanywhere}")
+    
+    # Create directories if they don't exist
+    os.makedirs(upload_folder, exist_ok=True)
+    os.makedirs(results_folder, exist_ok=True)
+    
+    # Test write access to directories
+    upload_test_file = os.path.join(upload_folder, '.test_write')
+    results_test_file = os.path.join(results_folder, '.test_write')
+    
+    upload_writeable = False
+    results_writeable = False
+    
+    try:
+        with open(upload_test_file, 'w') as f:
+            f.write('test')
+        upload_writeable = True
+    except Exception as e:
+        current_app.logger.error(f"Cannot write to upload folder: {str(e)}")
+    
+    try:
+        with open(results_test_file, 'w') as f:
+            f.write('test')
+        results_writeable = True
+    except Exception as e:
+        current_app.logger.error(f"Cannot write to results folder: {str(e)}")
+    
+    # Return the information as JSON
+    return jsonify({
+        'upload_folder': upload_folder,
+        'results_folder': results_folder,
+        'is_pythonanywhere': is_pythonanywhere,
+        'upload_folder_exists': os.path.exists(upload_folder),
+        'results_folder_exists': os.path.exists(results_folder),
+        'upload_folder_writeable': upload_writeable,
+        'results_folder_writeable': results_writeable
+    }) 
