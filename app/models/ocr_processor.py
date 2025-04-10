@@ -24,10 +24,32 @@ class OCRProcessor:
                 api_key=api_key
             )
             
-            # Define model IDs based on user specifications
-            self.wall_model_id = "wall-detection-xi9ox/2"
-            self.floor_model_id = "floortest3.1/2"
-            self.space_model_id = "builderformer-4/2"
+            # Try to get model IDs from Flask config if running in a Flask app
+            try:
+                from flask import current_app
+                # Define model IDs from config if available
+                self.wall_model_id = current_app.config.get('ROBOFLOW_WALL_MODEL_ID', "wall-detection-xi9ox/2")
+                self.floor_model_id = current_app.config.get('ROBOFLOW_FLOOR_MODEL_ID', "floortest3.1/2")
+                self.space_model_id = current_app.config.get('ROBOFLOW_SPACE_MODEL_ID', "builderformer-4/2")
+                
+                # Get OCR model IDs from config
+                self.ocr_model_1_id = current_app.config.get('ROBOFLOW_OCR_MODEL_1_ID', "2d-floorplan-analysis/7")
+                self.ocr_model_2_id = current_app.config.get('ROBOFLOW_OCR_MODEL_2_ID', "your-second-ocr-model-id/version")
+                self.ocr_model_3_id = current_app.config.get('ROBOFLOW_OCR_MODEL_3_ID', "your-third-ocr-model-id/version")
+                
+                self.logger.info(f"Using model IDs from config: {self.wall_model_id}, {self.floor_model_id}, {self.space_model_id}")
+                self.logger.info(f"Using OCR model IDs: {self.ocr_model_1_id}, {self.ocr_model_2_id}, {self.ocr_model_3_id}")
+            except (ImportError, RuntimeError):
+                # Not running in Flask context, use default values
+                self.wall_model_id = "wall-detection-xi9ox/2"
+                self.floor_model_id = "floortest3.1/2"
+                self.space_model_id = "builderformer-4/2"
+                
+                # Default OCR model IDs
+                self.ocr_model_1_id = "2d-floorplan-analysis/7"
+                self.ocr_model_2_id = "your-second-ocr-model-id/version"
+                self.ocr_model_3_id = "your-third-ocr-model-id/version"
+                
         except Exception as e:
             self.logger.error(f"Error initializing Roboflow client: {str(e)}")
             self.use_mock = True
@@ -969,6 +991,9 @@ class OCRProcessor:
                 wall_results = mock_results
                 floor_results = mock_results
                 space_results = mock_results
+                ocr_results_1 = mock_results
+                ocr_results_2 = mock_results
+                ocr_results_3 = mock_results
             else:
                 # Try API calls
                 try:
@@ -981,6 +1006,27 @@ class OCRProcessor:
                     
                     self.logger.info(f"Processing with space model: {self.space_model_id}")
                     space_results = self.client.infer(image_path, model_id=self.space_model_id)
+                    
+                    # Add the three OCR models processing
+                    self.logger.info(f"Processing with OCR model 1: {self.ocr_model_1_id}")
+                    ocr_results_1 = self.client.infer(image_path, model_id=self.ocr_model_1_id)
+                    
+                    # Only process with the other OCR models if they have valid IDs
+                    ocr_results_2 = {}
+                    ocr_results_3 = {}
+                    
+                    if not self.ocr_model_2_id.startswith('your-'):
+                        self.logger.info(f"Processing with OCR model 2: {self.ocr_model_2_id}")
+                        ocr_results_2 = self.client.infer(image_path, model_id=self.ocr_model_2_id)
+                    else:
+                        self.logger.warning("OCR model 2 ID not set correctly, skipping")
+                        
+                    if not self.ocr_model_3_id.startswith('your-'):
+                        self.logger.info(f"Processing with OCR model 3: {self.ocr_model_3_id}")
+                        ocr_results_3 = self.client.infer(image_path, model_id=self.ocr_model_3_id)
+                    else:
+                        self.logger.warning("OCR model 3 ID not set correctly, skipping")
+                        
                 except Exception as e:
                     self.logger.error(f"Error with Roboflow API: {str(e)}")
                     # Fall back to mock data if API call fails
@@ -989,6 +1035,9 @@ class OCRProcessor:
                     wall_results = mock_results
                     floor_results = mock_results
                     space_results = mock_results
+                    ocr_results_1 = mock_results
+                    ocr_results_2 = mock_results
+                    ocr_results_3 = mock_results
             
             # Process and combine results
             results = {
@@ -996,6 +1045,22 @@ class OCRProcessor:
                 'walls': self._process_wall_predictions(wall_results),
                 'floor_elements': self._process_floor_predictions(floor_results)
             }
+            
+            # Add OCR results from the three models
+            ocr_elements = []
+            
+            # Process OCR results from model 1
+            ocr_elements.extend(self._process_ocr_predictions(ocr_results_1, 'ocr_model_1'))
+            
+            # Process OCR results from models 2 and 3 if available
+            if ocr_results_2.get('predictions'):
+                ocr_elements.extend(self._process_ocr_predictions(ocr_results_2, 'ocr_model_2'))
+                
+            if ocr_results_3.get('predictions'):
+                ocr_elements.extend(self._process_ocr_predictions(ocr_results_3, 'ocr_model_3'))
+                
+            # Add the OCR elements to the results
+            results['ocr_elements'] = ocr_elements
             
             # Also extract text if needed (not included in results by default)
             # Can be called separately with extract_text method
@@ -1062,6 +1127,28 @@ class OCRProcessor:
                     'bbox': {'x': x, 'y': y, 'width': w, 'height': h},
                     'center': (pred['x'], pred['y'])
                 })
+        return processed
+        
+    def _process_ocr_predictions(self, predictions: Dict, source: str) -> List[Dict]:
+        """Process OCR predictions from any model."""
+        processed = []
+        for pred in predictions.get('predictions', []):
+            # Extract coordinates from inference SDK format
+            x = pred['x'] - pred['width'] / 2
+            y = pred['y'] - pred['height'] / 2
+            w = pred['width']
+            h = pred['height']
+            
+            element_class = pred['class']
+            confidence = pred['confidence']
+            
+            processed.append({
+                'class': element_class,
+                'confidence': confidence,
+                'bbox': {'x': x, 'y': y, 'width': w, 'height': h},
+                'center': (pred['x'], pred['y']),
+                'source': source  # Track which model detected this element
+            })
         return processed
         
     def save_results(self, results: Dict, output_path: str) -> None:

@@ -10,6 +10,7 @@ import io
 import time
 import re
 import pytesseract
+import traceback
 
 ocr_viewer = Blueprint('ocr_viewer', __name__)
 logger = logging.getLogger(__name__)
@@ -68,9 +69,19 @@ class OCRViewer:
             # Log what we're about to visualize
             logger.info(f"Visualizing: {len(results.get('spaces', []))} spaces, {len(results.get('walls', []))} walls, {len(results.get('floor_elements', []))} floor elements")
             
+            # Check for OCR elements from the three models
+            ocr_elements = results.get('ocr_elements', [])
+            logger.info(f"Found {len(ocr_elements)} OCR elements to visualize")
+            
             # Check for dimensions boxes
             dimension_boxes = results.get('dimension_boxes', [])
             logger.info(f"Found {len(dimension_boxes)} dimension boxes to visualize")
+            
+            # Check for text extraction results
+            text_extraction = results.get('text_extraction', {})
+            extracted_texts = text_extraction.get('extracted_texts', [])
+            text_boxes = text_extraction.get('text_boxes', [])
+            logger.info(f"Found {len(extracted_texts)} extracted texts and {len(text_boxes)} text boxes to visualize")
             
             # Draw spaces with transparency on overlay
             for space in results.get('spaces', []):
@@ -102,9 +113,75 @@ class OCRViewer:
                 color = self.colors.get(class_name, (255, 0, 255))[:3]  # Default to magenta if not found
                 self._draw_bbox(draw, bbox, color, class_name)
             
+            # Draw OCR elements from the three models
+            for element in ocr_elements:
+                bbox = element['bbox']
+                class_name = element['class']
+                source = element.get('source', 'unknown')
+                
+                # Choose color based on element type
+                if class_name == 'wall':
+                    color = self.colors['wall'][:3]
+                elif class_name == 'door':
+                    color = self.colors['door'][:3]
+                elif class_name == 'window':
+                    color = self.colors['window'][:3]
+                else:
+                    # Use a different color for other OCR elements to distinguish them
+                    color = (128, 0, 128)  # Purple for other OCR elements
+                
+                # Draw with dashed line to differentiate from main models
+                x, y, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
+                
+                # Draw dashed rectangle (simulated with short line segments)
+                dash_length = 5
+                for i in range(0, int(w), dash_length * 2):
+                    draw.line(((x + i, y), (x + min(i + dash_length, w), y)), fill=color, width=2)
+                    draw.line(((x + i, y + h), (x + min(i + dash_length, w), y + h)), fill=color, width=2)
+                
+                for i in range(0, int(h), dash_length * 2):
+                    draw.line(((x, y + i), (x, y + min(i + dash_length, h))), fill=color, width=2)
+                    draw.line(((x + w, y + i), (x + w, y + min(i + dash_length, h))), fill=color, width=2)
+                
+                # Add label with source info
+                draw.text((x, y - 15), f"{class_name} ({source})", fill=color)
+            
             # Create a separate dimension overlay to make dimensions stand out
             dim_overlay = Image.new('RGBA', pil_image.size, (0, 0, 0, 0))
             draw_dim = ImageDraw.Draw(dim_overlay)
+            
+            # Draw extracted text boxes if available
+            if text_boxes:
+                for i, box in enumerate(text_boxes):
+                    x, y, w, h = box['x'], box['y'], box['width'], box['height']
+                    text = box.get('text', '')
+                    confidence = box.get('confidence', 0)
+                    
+                    # Draw with semi-transparent background
+                    draw_dim.rectangle(((x, y), (x + w, y + h)), 
+                                    fill=(0, 200, 255, 60),  # Light blue semi-transparent
+                                    outline=(0, 150, 255), width=2)
+                    
+                    # Add label with a white background
+                    if text:
+                        text_label = f"{text[:20]}"
+                        
+                        # Get text dimensions
+                        try:
+                            # Try newest PIL version method
+                            text_bbox = draw_dim.textbbox((0, 0), text_label)
+                            text_w, text_h = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+                        except (AttributeError, TypeError):
+                            # Fallback to estimated size for older PIL versions
+                            text_w, text_h = len(text_label) * 7, 15
+                        
+                        # Draw text background
+                        draw_dim.rectangle(((x, y - text_h - 3), (x + text_w + 6, y - 3)), 
+                                        fill=(255, 255, 255, 220), 
+                                        outline=(0, 150, 255), width=1)
+                        
+                        # Draw text
+                        draw_dim.text((x + 3, y - text_h - 3), text_label, fill=(0, 100, 200))
             
             # Sort dimension boxes by confidence
             if dimension_boxes:
@@ -198,41 +275,44 @@ class OCRViewer:
                                         fill=(255, 255, 255, 180), outline=color)
                         
                         # Draw text
-                        draw_dim.text((x + 3, y - text_h - 2), text_label, fill=color)
+                        draw_dim.text((x + 3, y - text_h - 3), text_label, fill=color)
             else:
                 logger.warning("No dimension boxes to visualize - this may indicate an OCR issue")
             
             # Combine the dimension overlay with the main image
             pil_image = pil_image.convert('RGBA')
+            dim_overlay = dim_overlay.convert('RGBA')
             pil_image = Image.alpha_composite(pil_image, dim_overlay).convert('RGB')
-            draw = ImageDraw.Draw(pil_image)
             
-            # Add material takeoff info if available
+            # Add material takeoff summary if available
             if 'material_takeoff' in results:
-                logger.info("Material takeoff data found, adding to visualization")
-                self._add_material_takeoff_summary(pil_image, results['material_takeoff'])
+                pil_image = self._add_material_takeoff_summary(pil_image, results['material_takeoff'])
             
-            # Add help text when no dimensions found
-            if not dimension_boxes:
-                width, height = pil_image.size
-                draw.rectangle(((10, 10), (width-10, 70)), fill=(255, 255, 255, 200), outline=(0, 0, 0))
-                draw.text((20, 20), "No dimensions detected.", fill=(255, 0, 0))
-                draw.text((20, 40), "Try uploading a clearer floor plan with visible dimension text.", fill=(0, 0, 0))
-                
-            # Add a simple legend
-            self._add_legend(pil_image)
-                
-            # Convert back to bytes
-            img_byte_arr = io.BytesIO()
-            pil_image.save(img_byte_arr, format='PNG')
-            img_byte_arr = img_byte_arr.getvalue()
+            # Add text extraction summary if available
+            if 'text_extraction' in results and extracted_texts:
+                pil_image = self._add_text_extraction_summary(pil_image, text_extraction)
             
-            logger.info("Visualization complete")
-            return img_byte_arr
+            # Add legend
+            pil_image = self._add_legend(pil_image)
+            
+            # Save the visualization to a bytes buffer
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format='PNG')
+            buffer.seek(0)
+            
+            logger.info("Visualization completed successfully")
+            return buffer.getvalue()
             
         except Exception as e:
-            logger.error(f"Error visualizing results: {str(e)}")
-            raise
+            logger.error(f"Error in visualization: {str(e)}")
+            # Return a simple error image
+            error_img = Image.new('RGB', (800, 600), color=(255, 255, 255))
+            draw = ImageDraw.Draw(error_img)
+            draw.text((50, 50), f"Error in visualization: {str(e)}", fill=(255, 0, 0))
+            buffer = io.BytesIO()
+            error_img.save(buffer, format='PNG')
+            buffer.seek(0)
+            return buffer.getvalue()
     
     def _add_material_takeoff_summary(self, pil_image, material_takeoff):
         """Add a summary of material takeoff data to the image."""
@@ -269,40 +349,92 @@ class OCRViewer:
                     summary_y += 20
             
             logger.info("Added material takeoff summary to visualization")
+            return pil_image
         except Exception as e:
             logger.error(f"Error adding material takeoff summary: {str(e)}")
+            return pil_image
+    
+    def _add_text_extraction_summary(self, pil_image, text_extraction):
+        """Add a summary of extracted text to the visualization."""
+        try:
+            extracted_texts = text_extraction.get('extracted_texts', [])
+            if not extracted_texts:
+                return pil_image
+            
+            # Create a new image that's taller for the summary
+            padding = 180  # Increased height for the summary
+            new_height = pil_image.height + padding
+            summary_img = Image.new('RGB', (pil_image.width, new_height), color=(255, 255, 255))
+            summary_img.paste(pil_image, (0, 0))
+            
+            # Draw the summary
+            draw = ImageDraw.Draw(summary_img)
+            
+            # Draw section title
+            title = "Extracted Text Summary"
+            draw.rectangle(((0, pil_image.height), (pil_image.width, pil_image.height + 30)), 
+                          fill=(230, 230, 255))
+            draw.text((10, pil_image.height + 5), title, fill=(0, 0, 0))
+            
+            # Display up to 5 most relevant extracted texts
+            start_y = pil_image.height + 35
+            max_display = min(5, len(extracted_texts))
+            display_texts = extracted_texts[:max_display]
+            
+            for i, text in enumerate(display_texts):
+                prefix = "• "
+                full_text = f"{prefix}{text}"
+                draw.text((10, start_y + i * 25), full_text, fill=(0, 0, 0))
+            
+            # Show text count
+            if len(extracted_texts) > max_display:
+                draw.text((10, start_y + max_display * 25), 
+                         f"... and {len(extracted_texts) - max_display} more texts extracted", 
+                         fill=(100, 100, 100))
+            
+            return summary_img
+        except Exception as e:
+            logger.error(f"Error adding text extraction summary: {str(e)}")
+            return pil_image
     
     def _add_legend(self, pil_image):
-        """Add a simple legend to the image."""
-        draw = ImageDraw.Draw(pil_image)
-        width, height = pil_image.size
-        
-        # Set legend position in bottom right
-        legend_x = width - 200
-        legend_y = height - 200  # Extended to fit more entries
-        
-        # Draw legend background
-        draw.rectangle(((legend_x - 10, legend_y - 10), (legend_x + 190, legend_y + 180)), 
-                      fill=(255, 255, 255, 200), outline=(0, 0, 0))
-        
-        # Add title
-        draw.text((legend_x, legend_y), "Legend:", fill=(0, 0, 0))
-        
-        # Add entries
-        entries = [
-            ("Spaces", self.colors['space_living_room'][:3]),
-            ("Walls", self.colors['wall'][:3]),
-            ("Doors", self.colors['door'][:3]),
-            ("Windows", self.colors['window'][:3]),
-            ("Dimensions", self.colors['dimension'][:3]),
-            ("Materials", self.colors['material'][:3])
-        ]
-        
-        for i, (label, color) in enumerate(entries):
-            y_pos = legend_y + 25 + i * 20
-            draw.rectangle(((legend_x, y_pos), (legend_x + 15, y_pos + 15)), fill=color)
-            draw.text((legend_x + 25, y_pos), label, fill=(0, 0, 0))
+        """Add a legend to the visualization."""
+        try:
+            # Create a new image with space for the legend
+            padding = 80
+            new_width = pil_image.width + padding
+            legend_img = Image.new('RGB', (new_width, pil_image.height), color=(255, 255, 255))
+            legend_img.paste(pil_image, (0, 0))
             
+            # Draw the legend
+            draw = ImageDraw.Draw(legend_img)
+            
+            # Title
+            draw.text((pil_image.width + 5, 10), "Legend", fill=(0, 0, 0))
+            
+            # Create legend entries
+            entries = [
+                {"label": "Room", "color": self.colors['space_living_room'][:3]},
+                {"label": "Wall", "color": self.colors['wall'][:3]},
+                {"label": "Door", "color": self.colors['door'][:3]},
+                {"label": "Window", "color": self.colors['window'][:3]},
+                {"label": "Dimension", "color": (255, 0, 255)},
+                {"label": "Material", "color": (0, 150, 150)},
+                {"label": "Text", "color": (0, 150, 255)}
+            ]
+            
+            # Draw each entry
+            for i, entry in enumerate(entries):
+                y_pos = 40 + i * 25
+                draw.rectangle(((pil_image.width + 5, y_pos), (pil_image.width + 20, y_pos + 15)), 
+                              fill=entry['color'], outline=(0, 0, 0))
+                draw.text((pil_image.width + 25, y_pos), entry['label'], fill=(0, 0, 0))
+            
+            return legend_img
+        except Exception as e:
+            logger.error(f"Error adding legend: {str(e)}")
+            return pil_image
+    
     def _draw_bbox(self, draw: Any, bbox: Dict, color: tuple, label: str) -> None:
         """Draw a bounding box with label on the image."""
         x, y, w, h = bbox['x'], bbox['y'], bbox['width'], bbox['height']
@@ -557,373 +689,307 @@ class OCRViewer:
 @ocr_viewer.route('/viewer')
 @ocr_viewer.route('/floor-plan-analyzer')
 def viewer():
-    """Render the 2D Floor Plan Analyzer page."""
+    """Render the OCR viewer page."""
     return render_template('ocr_viewer.html')
     
-@ocr_viewer.route('/process_image', methods=['POST'])
-@ocr_viewer.route('/analyze-floor-plan', methods=['POST'])
-def process_image():
-    """Process an uploaded floor plan image and return visualization."""
+@ocr_viewer.route('/api/process_ocr', methods=['POST'])
+def process_ocr():
+    """Process an image with OCR to detect text and bounding boxes."""
     try:
-        logger.info("Starting floor plan analysis process")
+        # Check if the post request has the file part
         if 'image' not in request.files:
-            return jsonify({'error': 'No image provided'}), 400
-            
-        image_file = request.files['image']
-        if not image_file.filename:
-            return jsonify({'error': 'No image selected'}), 400
-            
-        # Save uploaded image
-        temp_path = os.path.join('temp', image_file.filename)
-        os.makedirs('temp', exist_ok=True)
-        image_file.save(temp_path)
-        logger.info(f"Saved uploaded image to {temp_path}")
+            return jsonify({'success': False, 'error': 'No image file provided'}), 400
         
-        # Process image
-        from app.models.ocr_processor import OCRProcessor
+        file = request.files['image']
         
-        # Try to get API key from environment first, then from config
-        api_key = os.getenv('ROBOFLOW_API_KEY')
-        if api_key is None:
-            # Try to get from config
-            api_key = current_app.config.get('ROBOFLOW_API_KEY')
-            
-        if api_key is None or api_key == "YOUR_ROBOFLOW_API_KEY_HERE":
-            return jsonify({
-                'error': 'Roboflow API key not configured. Please set the ROBOFLOW_API_KEY in your environment or config file.'
-            }), 500
-            
-        # Create processor and process the image for room detection
-        logger.info("Processing floor plan image with OCR processor")
-        processor = OCRProcessor(api_key=api_key)
-        results = processor.process_image(temp_path)
+        # If user does not select file, browser also
+        # submit an empty part without filename
+        if file.filename == '':
+            return jsonify({'success': False, 'error': 'No selected file'}), 400
         
-        # Process for text and dimension extraction
-        logger.info("Extracting dimensions and material text")
-        text_results = processor.extract_text(temp_path, filter_dimensions=True, detect_bboxes=True)
+        # Get filter preferences
+        # Default to false for better text recognition
+        filter_dimensions = request.form.get('filterDimensions', 'false').lower() == 'true'
         
-        # Calculate material takeoff if dimensions were found
-        dimension_boxes = text_results.get('dimension_boxes', [])
-        logger.info(f"Found {len(dimension_boxes)} dimension boxes")
+        # Create a temporary file to save the image
+        timestamp = int(time.time())
+        filename = f"{timestamp}_{file.filename}"
         
-        if dimension_boxes:
-            # Default to wall material takeoff with concrete
-            logger.info("Calculating material takeoff from dimensions")
-            element_type = request.form.get('element_type', 'wall')
-            material = request.form.get('material', 'concrete')
-            material_takeoff = processor.calculate_material_takeoff(dimension_boxes, element_type, material)
-            
-            # Add material takeoff and dimension boxes to results
-            results['material_takeoff'] = material_takeoff
-            results['dimension_boxes'] = dimension_boxes
-            
-            logger.info(f"Material takeoff calculation complete: {len(material_takeoff.get('element_types', {}).get(element_type, {}).get('dimensions', []))} dimensions processed")
-        else:
-            logger.warning("No dimensions found for material takeoff calculation")
+        # Create temp directory if it doesn't exist
+        temp_dir = os.path.join(os.getcwd(), 'temp')
+        os.makedirs(temp_dir, exist_ok=True)
         
-        # Create visualization
-        logger.info("Creating visualization of analysis results")
-        viewer = OCRViewer()
-        visualization = viewer.visualize_results(temp_path, results)
+        # Save the uploaded file
+        file_path = os.path.join(temp_dir, filename)
+        file.save(file_path)
         
-        # Clean up
-        os.remove(temp_path)
-        logger.info("Floor plan analysis complete")
+        # Process the image with OCR
+        # Read the image
+        img = cv2.imread(file_path)
+        if img is None:
+            return jsonify({'success': False, 'error': 'Failed to read image file'}), 400
         
-        return send_file(
-            io.BytesIO(visualization),
-            mimetype='image/png'
-        )
+        height, width, _ = img.shape
         
-    except Exception as e:
-        logger.error(f"Error processing image: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@ocr_viewer.route('/text-extraction')
-def text_extraction_page():
-    """Render the text extraction page."""
-    return render_template('text_extraction.html')
-
-@ocr_viewer.route('/extract_text', methods=['POST'])
-def extract_text():
-    """Extract text from an uploaded image with preprocessing."""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image provided'}), 400
-            
-        image_file = request.files['image']
-        if not image_file.filename:
-            return jsonify({'error': 'No image selected'}), 400
+        # Use different config depending on filter preferences
+        config = '--psm 11'  # Sparse text with OSD
+        if filter_dimensions:
+            # Focus on finding dimensions like 1000x500, 10'-6", etc.
+            config += " --oem 3 -c tessedit_char_whitelist='0123456789.-\"\'x X@ abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'"
         
-        # Get filter preference (default to filtering dimensions/materials only)
-        filter_dimensions = request.form.get('filter_dimensions', 'true').lower() == 'true'
-            
-        # Save uploaded image
-        temp_path = os.path.join('temp', image_file.filename)
-        os.makedirs('temp', exist_ok=True)
-        image_file.save(temp_path)
+        # Get data including bounding boxes
+        ocr_data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT, config=config)
         
-        # Process image for text extraction
-        from app.models.ocr_processor import OCRProcessor
-        
-        # Text extraction doesn't need Roboflow API key
-        processor = OCRProcessor(api_key='')
-        results = processor.extract_text(temp_path, filter_dimensions=filter_dimensions, detect_bboxes=True)
-        
-        # Format for return if no visualization requested
-        if request.form.get('visualize', 'true').lower() != 'true':
-            # Clean up temp file
-            os.remove(temp_path)
-            return jsonify(results)
-        
-        # Create visualization of text extraction
-        viewer = OCRViewer()
-        visualization = viewer.visualize_text_extraction(temp_path, results)
-        
-        # Clean up
-        os.remove(temp_path)
-        
-        return send_file(
-            io.BytesIO(visualization),
-            mimetype='image/png'
-        )
-        
-    except Exception as e:
-        logger.error(f"Error extracting text: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@ocr_viewer.route('/material_takeoff', methods=['POST'])
-def material_takeoff():
-    """Calculate material takeoff from extracted text dimensions."""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image provided'}), 400
-            
-        image_file = request.files['image']
-        if not image_file.filename:
-            return jsonify({'error': 'No image selected'}), 400
-        
-        # Get element type and material
-        element_type = request.form.get('element_type', 'wall')
-        material = request.form.get('material', 'concrete')
-            
-        # Save uploaded image
-        temp_path = os.path.join('temp', image_file.filename)
-        os.makedirs('temp', exist_ok=True)
-        image_file.save(temp_path)
-        
-        # Process image for text extraction with dimension detection
-        from app.models.ocr_processor import OCRProcessor
-        
-        processor = OCRProcessor(api_key='')
-        text_results = processor.extract_text(temp_path, filter_dimensions=True, detect_bboxes=True)
-        
-        # Calculate material takeoff from extracted dimensions
-        dimension_boxes = text_results.get('dimension_boxes', [])
-        material_takeoff = processor.calculate_material_takeoff(dimension_boxes, element_type, material)
-        
-        # Format for return if no visualization requested
-        if request.form.get('visualize', 'true').lower() != 'true':
-            # Clean up temp file
-            os.remove(temp_path)
-            return jsonify({
-                'text_results': text_results,
-                'material_takeoff': material_takeoff
-            })
-        
-        # Create visualization of material takeoff
-        viewer = OCRViewer()
-        visualization = viewer.visualize_material_takeoff(temp_path, material_takeoff, text_results)
-        
-        # Clean up
-        os.remove(temp_path)
-        
-        return send_file(
-            io.BytesIO(visualization),
-            mimetype='image/png'
-        )
-        
-    except Exception as e:
-        logger.error(f"Error calculating material takeoff: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@ocr_viewer.route('/process_selection', methods=['POST'])
-def process_selection():
-    """Process a selected region from the canvas for OCR."""
-    try:
-        if 'image' not in request.files:
-            return jsonify({'error': 'No image provided'}), 400
-            
-        image_file = request.files['image']
-        if not image_file.filename:
-            return jsonify({'error': 'No image selected'}), 400
-        
-        # Get box coordinates if provided
-        box_coordinates = {}
-        if 'box_coordinates' in request.form:
-            try:
-                box_coordinates = json.loads(request.form['box_coordinates'])
-            except:
-                pass
-            
-        # Save temporary image
-        temp_path = os.path.join('temp', f'selection_{int(time.time())}.png')
-        os.makedirs('temp', exist_ok=True)
-        image_file.save(temp_path)
-        
-        # Process image with tesseract directly for better control
-        from app.models.ocr_processor import OCRProcessor
-        processor = OCRProcessor(api_key='')  # No API key needed for OCR
-        
-        # Use different OCR settings based on what's being detected
-        # For dimensions, use specific settings to detect numbers and dimension patterns
-        config = '--psm 6 -c preserve_interword_spaces=1'
-        
-        try:
-            # Resize the image to improve OCR detection (especially for small bounding boxes)
-            image = cv2.imread(temp_path)
-            
-            # Different preprocessing for different sizes
-            if image.shape[0] < 50 or image.shape[1] < 100:  # Very small selection
-                # Resize to larger dimensions for better OCR
-                image = cv2.resize(image, (0, 0), fx=4, fy=4)
-                # Apply processing specific to dimension text
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                # Apply brightness/contrast adjustment (as suggested by StackOverflow solution)
-                alpha = 1.2  # Contrast control
-                beta = -20   # Brightness control
-                image = cv2.convertScaleAbs(gray, alpha=alpha, beta=beta)
-            else:
-                # Preprocessing for larger selections
-                # Convert to grayscale
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                # Apply adaptive threshold
-                image = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                            cv2.THRESH_BINARY, 11, 2)
-            
-            # Save preprocessed image for OCR
-            cv2.imwrite(temp_path, image)
-            
-            # Run OCR on the preprocessed image
-            text = pytesseract.image_to_string(image, config=config).strip()
-            
-            # For dimension detection, try to find numeric patterns
-            confidence = 90  # Default high confidence
-            
-            # Check for dimension patterns
-            dimension_pattern = r'\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?(?:\s*(?:mm|cm|m|ft|in|\'|\"))?'
-            dimension_matches = re.findall(dimension_pattern, text)
-            
-            if dimension_matches:
-                # If found dimension patterns, use the first one
-                text = dimension_matches[0]
-                # Clean up text if it's a dimension
-                text = re.sub(r'\s+', '', text)  # Remove spaces
-                logger.info(f"Found dimension text: {text}")
-            elif len(text) == 0:
-                # If no text was found, try other PSM modes
-                for psm in [3, 7, 8, 10]:
-                    alt_config = f'--psm {psm}'
-                    alt_text = pytesseract.image_to_string(image, config=alt_config).strip()
-                    if alt_text:
-                        text = alt_text
-                        confidence = 70  # Lower confidence for alternative modes
-                        break
+        # Process results into a structured format
+        ocr_results = []
+        n_boxes = len(ocr_data['level'])
+        for i in range(n_boxes):
+            # Filter out empty results and low confidence
+            if int(ocr_data['conf'][i]) > 15 and ocr_data['text'][i].strip() != '':
+                # Determine box type based on content
+                box_type = 'text'
+                text = ocr_data['text'][i]
                 
-            # Return processed text
-            result = {
-                'text': text,
-                'confidence': confidence,
-                'box_coordinates': box_coordinates
-            }
-            
-            os.remove(temp_path)
-            return jsonify(result)
-            
+                # Check for dimension patterns
+                if re.search(r'\d+[\'\"\-\.]', text) or re.search(r'\d+\s*[xX]\s*\d+', text):
+                    box_type = 'dimension'
+                elif re.search(r'[Ww]ood|[Ss]teel|[Cc]oncrete|[Gg]lass|[Mm]etal|[Bb]rick', text):
+                    box_type = 'material'
+                
+                ocr_result = {
+                    'x': ocr_data['left'][i],
+                    'y': ocr_data['top'][i],
+                    'width': ocr_data['width'][i],
+                    'height': ocr_data['height'][i],
+                    'text': text,
+                    'confidence': float(ocr_data['conf'][i]) / 100 if int(ocr_data['conf'][i]) > 0 else 0,
+                    'type': box_type
+                }
+                
+                ocr_results.append(ocr_result)
+        
+        # Now process the image through Roboflow models
+        try:
+            # Get the API key from config
+            api_key = current_app.config.get('ROBOFLOW_API_KEY')
+            if api_key:
+                # Create OCR processor instance
+                from app.models.ocr_processor import OCRProcessor
+                processor = OCRProcessor(api_key)
+                
+                # Process with all models
+                model_results = processor.process_image(file_path)
+                
+                # Add wall boxes
+                for wall in model_results.get('walls', []):
+                    bbox = wall['bbox']
+                    ocr_results.append({
+                        'x': bbox['x'],
+                        'y': bbox['y'],
+                        'width': bbox['width'],
+                        'height': bbox['height'],
+                        'text': 'Wall',
+                        'confidence': wall['confidence'],
+                        'type': 'wall'
+                    })
+                
+                # Add floor element boxes (doors, windows)
+                for element in model_results.get('floor_elements', []):
+                    bbox = element['bbox']
+                    ocr_results.append({
+                        'x': bbox['x'],
+                        'y': bbox['y'],
+                        'width': bbox['width'],
+                        'height': bbox['height'],
+                        'text': element['class'].capitalize(),
+                        'confidence': element['confidence'],
+                        'type': element['class']
+                    })
+                
+                # Add spaces
+                for space in model_results.get('spaces', []):
+                    bbox = space['bbox']
+                    ocr_results.append({
+                        'x': bbox['x'],
+                        'y': bbox['y'],
+                        'width': bbox['width'],
+                        'height': bbox['height'],
+                        'text': space['class'].replace('space_', 'Space: '),
+                        'confidence': space['confidence'],
+                        'type': 'room'
+                    })
+                
+                # Add OCR elements from the three OCR models
+                for element in model_results.get('ocr_elements', []):
+                    bbox = element['bbox']
+                    # Determine display type
+                    element_type = element['class']
+                    if element_type in ['door', 'window']:
+                        display_type = element_type
+                    elif element_type == 'wall':
+                        display_type = 'wall'
+                    else:
+                        # Default for other detected elements
+                        display_type = 'text'
+                    
+                    ocr_results.append({
+                        'x': bbox['x'],
+                        'y': bbox['y'],
+                        'width': bbox['width'],
+                        'height': bbox['height'],
+                        'text': f"{element['class'].capitalize()} ({element['source']})",
+                        'confidence': element['confidence'],
+                        'type': display_type
+                    })
         except Exception as e:
-            logger.error(f"Error in OCR processing: {str(e)}")
-            return jsonify({'error': str(e), 'text': ''}), 500
+            logger.error(f"Error processing with Roboflow models: {str(e)}\n{traceback.format_exc()}")
+            # Continue with just OCR results
+        
+        # Create a URL for the image
+        image_url = f"/temp/{filename}"
+        
+        # Return the results
+        return jsonify({
+            'success': True,
+            'imageUrl': image_url,
+            'ocrResults': ocr_results
+        })
             
     except Exception as e:
-        logger.error(f"Error processing selection: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error processing OCR: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
 
-@ocr_viewer.route('/save_annotations', methods=['POST'])
-def save_annotations():
-    """Save annotations created by the user."""
+@ocr_viewer.route('/api/process_ocr_box', methods=['POST'])
+def process_ocr_box():
+    """Process a specific bounding box within an image for OCR."""
     try:
         data = request.json
+        if not data or not all(k in data for k in ['x', 'y', 'width', 'height']):
+            return jsonify({'success': False, 'error': 'Missing required box coordinates'}), 400
         
-        if not data:
-            return jsonify({'error': 'No annotation data provided'}), 400
+        # Get image path from a session identifier
+        # This is a simplified version - in a real app you would use flask sessions
+        # or cookies to store the current image path
+        
+        temp_dir = os.path.join(os.getcwd(), 'temp')
+        files = os.listdir(temp_dir)
+        
+        # Find the most recent image file in the temp directory
+        image_files = [f for f in files if f.endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'))]
+        if not image_files:
+            return jsonify({'success': False, 'error': 'No image found'}), 404
+        
+        # Sort by creation time (newest first)
+        image_files.sort(key=lambda x: os.path.getctime(os.path.join(temp_dir, x)), reverse=True)
+        image_path = os.path.join(temp_dir, image_files[0])
+        
+        # Extract the region and perform OCR
+        img = cv2.imread(image_path)
+        if img is None:
+            return jsonify({'success': False, 'error': 'Failed to read image file'}), 400
             
-        # Get individual annotation sets
-        ocr_boxes = data.get('ocr', [])
-        user_annotations = data.get('user', [])
-        dimension_links = data.get('links', [])
+        x, y, w, h = int(data['x']), int(data['y']), int(data['width']), int(data['height'])
         
-        # Create timestamp for unique filename
-        timestamp = int(time.time())
+        # Make sure coordinates are within image bounds
+        height, width, _ = img.shape
+        x = max(0, min(x, width - 1))
+        y = max(0, min(y, height - 1))
+        w = max(1, min(w, width - x))
+        h = max(1, min(h, height - y))
         
-        # Create annotation directory if it doesn't exist
-        annotation_dir = os.path.join('static', 'annotations')
-        os.makedirs(annotation_dir, exist_ok=True)
+        # Extract the region
+        roi = img[y:y+h, x:x+w]
+        
+        # Perform OCR on the region
+        text = pytesseract.image_to_string(roi, config='--psm 7').strip()  # PSM 7 is for single line of text
+        
+        return jsonify({
+            'success': True,
+            'text': text,
+            'box': {'x': x, 'y': y, 'width': w, 'height': h}
+        })
+        
+    except Exception as e:
+        logger.error(f"Error processing OCR box: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500
+
+@ocr_viewer.route('/api/save_ocr_annotations', methods=['POST'])
+def save_ocr_annotations():
+    """Save OCR annotations to a file."""
+    try:
+        data = request.json
+        if not data or 'boxes' not in data:
+            return jsonify({'success': False, 'error': 'Missing boxes data'}), 400
+        
+        boxes = data['boxes']
+        
+        # Find the current image being processed
+        temp_dir = os.path.join(os.getcwd(), 'temp')
+        files = os.listdir(temp_dir)
+        
+        # Find the most recent image file in the temp directory
+        image_files = [f for f in files if f.endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'))]
+        if not image_files:
+            return jsonify({'success': False, 'error': 'No image found'}), 404
+        
+        # Sort by creation time (newest first)
+        image_files.sort(key=lambda x: os.path.getctime(os.path.join(temp_dir, x)), reverse=True)
+        image_path = os.path.join(temp_dir, image_files[0])
+        image_filename = os.path.basename(image_path)
+        
+        # Create a results directory if it doesn't exist
+        results_dir = os.path.join(current_app.config.get('RESULTS_FOLDER', 'app/results'))
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Generate a filename for the annotations
+        base_name = os.path.splitext(image_filename)[0]
+        annotations_filename = f"{base_name}_annotations.json"
+        annotations_path = os.path.join(results_dir, annotations_filename)
         
         # Save annotations to file
-        annotation_file = os.path.join(annotation_dir, f'annotations_{timestamp}.json')
+        with open(annotations_path, 'w') as f:
+            json.dump({
+                'image': image_filename,
+                'boxes': boxes,
+                'timestamp': time.time()
+            }, f, indent=4)
         
-        with open(annotation_file, 'w') as f:
-            json.dump(data, f, indent=2)
+        # Create a visual representation of the annotations
+        img = cv2.imread(image_path)
+        result_img = img.copy()
+        
+        # Draw boxes on the image
+        for box in boxes:
+            x, y, w, h = box['x'], box['y'], box['width'], box['height']
+            text = box.get('text', '')
+            box_type = box.get('type', 'text')
             
-        # Store in database if needed (stub for now)
-        # db.store_annotations(timestamp, data)
+            # Different colors for different types
+            if box_type == 'dimension':
+                color = (0, 150, 255)  # Orange for dimensions
+            elif box_type == 'material':
+                color = (255, 150, 0)  # Blue for materials
+            else:
+                color = (0, 255, 0)    # Green for other text
+            
+            # Draw the bounding box
+            cv2.rectangle(result_img, (int(x), int(y)), (int(x + w), int(y + h)), color, 2)
+            
+            # Draw the text
+            cv2.putText(result_img, text, (int(x), int(y - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
         
-        logger.info(f"Saved annotations to {annotation_file}")
+        # Save the result image
+        result_filename = f"{base_name}_annotated.jpg"
+        result_path = os.path.join(results_dir, result_filename)
+        cv2.imwrite(result_path, result_img)
         
         return jsonify({
             'success': True,
             'message': 'Annotations saved successfully',
-            'filename': annotation_file,
-            'count': {
-                'ocr': len(ocr_boxes),
-                'user': len(user_annotations),
-                'links': len(dimension_links)
-            }
+            'file': annotations_filename,
+            'annotatedImage': f"/results/{result_filename}"
         })
-        
-    except Exception as e:
-        logger.error(f"Error saving annotations: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@ocr_viewer.route('/process_linked_dimensions', methods=['POST'])
-def process_linked_dimensions():
-    """Process dimensions that have been linked to walls."""
-    try:
-        data = request.json
-        
-        if not data or 'links' not in data:
-            return jsonify({'error': 'No dimension links provided'}), 400
             
-        links = data.get('links', [])
-        logger.info(f"Processing {len(links)} dimension links")
-        
-        # Process the linked dimensions
-        from app.models.ocr_processor import OCRProcessor
-        processor = OCRProcessor(api_key='')
-        
-        results = processor.process_linked_dimensions(links)
-        
-        # Return the processed dimensions with calculations
-        return jsonify({
-            'success': True,
-            'results': results,
-            'count': {
-                'links': len(results.get('links', [])),
-                'walls': len(results.get('walls', {})),
-                'dimensions': len(results.get('dimensions', {}))
-            }
-        })
-        
     except Exception as e:
-        logger.error(f"Error processing linked dimensions: {str(e)}")
-        return jsonify({'error': str(e)}), 500 
+        logger.error(f"Error saving OCR annotations: {str(e)}\n{traceback.format_exc()}")
+        return jsonify({'success': False, 'error': f'Internal server error: {str(e)}'}), 500 
