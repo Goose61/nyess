@@ -1,0 +1,894 @@
+{% extends "base.html" %}
+
+{% block title %}IFC Text Extraction{% endblock %}
+
+{% block head %}
+{{ super() }}
+<style>
+    .canvas-container {
+        position: relative;
+        margin: 20px 0;
+        overflow: hidden;
+        border: 1px solid #ddd;
+    }
+    #imageCanvas, #drawingCanvas, #ocrCanvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+    #imageCanvas {
+        z-index: 1;
+    }
+    #ocrCanvas {
+        z-index: 2;
+    }
+    #drawingCanvas {
+        z-index: 3;
+        cursor: crosshair;
+    }
+    .toolbar {
+        display: flex;
+        gap: 10px;
+        padding: 10px 0;
+    }
+    .tool-btn {
+        padding: 8px 12px;
+        background-color: #f0f0f0;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        cursor: pointer;
+    }
+    .tool-btn.active {
+        background-color: #007bff;
+        color: white;
+    }
+    .bbox-info {
+        position: absolute;
+        background-color: rgba(255, 255, 255, 0.8);
+        border: 1px solid #ddd;
+        padding: 10px;
+        border-radius: 4px;
+        z-index: 10;
+        display: none;
+    }
+    .dimension-link {
+        position: absolute;
+        background-color: rgba(0, 200, 0, 0.2);
+        border: 2px dashed green;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-6">Interactive Floor Plan Annotation</h1>
+    
+    <div class="bg-white rounded-lg shadow-md p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4">Upload Floor Plan Image</h2>
+        
+        <form id="uploadForm" class="space-y-4">
+            <div class="space-y-2">
+                <label for="imageInput" class="block font-medium">Select Image</label>
+                <input type="file" id="imageInput" name="image" accept="image/*" class="block w-full">
+            </div>
+            
+            <div class="space-y-2">
+                <label class="block font-medium">Processing Options</label>
+                <div class="flex items-center">
+                    <input type="checkbox" id="filterDimensions" name="filterDimensions" checked class="mr-2">
+                    <label for="filterDimensions">Filter for dimension/material text only</label>
+                </div>
+            </div>
+            
+            <div class="flex space-x-4">
+                <button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">
+                    Process Floor Plan
+                </button>
+            </div>
+        </form>
+    </div>
+    
+    <div id="errorMessage" class="bg-red-100 text-red-700 p-4 rounded mb-6 hidden"></div>
+    
+    <div class="loading hidden">
+        <div class="flex justify-center items-center">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+        <p class="text-center mt-4">Processing image...</p>
+    </div>
+    
+    <div id="interactiveContainer" class="bg-white rounded-lg shadow-md p-6 hidden">
+        <h2 class="text-xl font-semibold mb-4">Interactive Annotation</h2>
+        
+        <div class="toolbar">
+            <button id="selectTool" class="tool-btn active">Select</button>
+            <button id="drawTool" class="tool-btn">Draw Box</button>
+            <button id="linkTool" class="tool-btn">Link Dimension</button>
+            <button id="deleteTool" class="tool-btn">Delete</button>
+            <button id="clearAllTool" class="tool-btn">Clear All</button>
+        </div>
+        
+        <div class="toolbar">
+            <select id="boxType" class="p-2 border border-gray-300 rounded">
+                <option value="dimension">Dimension</option>
+                <option value="material">Material</option>
+                <option value="room">Room</option>
+                <option value="door">Door</option>
+                <option value="window">Window</option>
+                <option value="wall">Wall</option>
+            </select>
+            <button id="processBoxTool" class="tool-btn bg-green-600 text-white">Process Selected Box</button>
+            <button id="processLinksTool" class="tool-btn bg-purple-600 text-white">Process Dimension Links</button>
+            <button id="saveAnnotations" class="tool-btn bg-blue-600 text-white">Save Annotations</button>
+        </div>
+        
+        <div class="canvas-container">
+            <canvas id="imageCanvas"></canvas>
+            <canvas id="ocrCanvas"></canvas>
+            <canvas id="drawingCanvas"></canvas>
+            <div id="boxInfoPanel" class="bbox-info">
+                <h3 class="font-medium mb-2">Box Information</h3>
+                <div class="mb-2">
+                    <label>Type:</label>
+                    <select id="boxInfoType" class="p-1 border border-gray-300 rounded">
+                        <option value="dimension">Dimension</option>
+                        <option value="material">Material</option>
+                        <option value="room">Room</option>
+                        <option value="door">Door</option>
+                        <option value="window">Window</option>
+                        <option value="wall">Wall</option>
+                    </select>
+                </div>
+                <div class="mb-2">
+                    <label>Text:</label>
+                    <input type="text" id="boxInfoText" class="p-1 border border-gray-300 rounded w-full">
+                </div>
+                <div class="flex space-x-2 mt-2">
+                    <button id="boxInfoSave" class="bg-green-600 text-white px-2 py-1 rounded text-sm">Save</button>
+                    <button id="boxInfoCancel" class="bg-gray-500 text-white px-2 py-1 rounded text-sm">Cancel</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="mt-4">
+            <h3 class="font-medium mb-2">Recognized Elements</h3>
+            <div id="recognizedElements" class="bg-gray-100 p-4 rounded">
+                <p>No elements recognized yet. Draw a box or process the image.</p>
+            </div>
+        </div>
+        
+        <div id="linkedDimensionsResults" class="mt-4 hidden">
+            <h3 class="font-medium mb-2">Linked Dimensions Results</h3>
+            <div id="linkedResultsContent" class="bg-gray-100 p-4 rounded">
+                <p>No linked dimensions processed yet.</p>
+            </div>
+        </div>
+    </div>
+    
+    <div id="materialTakeoffOptions" class="bg-white rounded-lg shadow-md p-6 mb-6 hidden">
+        <h2 class="text-xl font-semibold mb-4">Material Takeoff Options</h2>
+        
+        <form id="materialTakeoffForm" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                    <label for="elementType" class="block font-medium">Element Type</label>
+                    <select id="elementType" name="elementType" class="block w-full p-2 border border-gray-300 rounded">
+                        <option value="wall">Wall</option>
+                        <option value="floor">Floor</option>
+                        <option value="ceiling">Ceiling</option>
+                    </select>
+                </div>
+                
+                <div class="space-y-2">
+                    <label for="material" class="block font-medium">Material</label>
+                    <select id="material" name="material" class="block w-full p-2 border border-gray-300 rounded">
+                        <option value="concrete">Concrete</option>
+                        <option value="brick">Brick</option>
+                        <option value="wood">Wood</option>
+                        <option value="steel">Steel</option>
+                        <option value="glass">Glass</option>
+                        <option value="drywall">Drywall</option>
+                        <option value="carpet">Carpet</option>
+                        <option value="tile">Tile</option>
+                    </select>
+                </div>
+            </div>
+            
+            <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">
+                Generate Material Takeoff
+            </button>
+        </form>
+    </div>
+    
+    <div id="resultContainer" class="bg-white rounded-lg shadow-md p-6 hidden mb-6">
+        <h2 class="text-xl font-semibold mb-4">Results</h2>
+        
+        <div id="materialTakeoffResults" class="mb-4 hidden">
+            <h3 class="font-medium mb-2">Material Takeoff</h3>
+            <div class="flex justify-center">
+                <img id="materialTakeoffImage" class="max-w-full border border-gray-300" alt="Material takeoff visualization">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const imageCanvas = document.getElementById('imageCanvas');
+    const ocrCanvas = document.getElementById('ocrCanvas');
+    const drawingCanvas = document.getElementById('drawingCanvas');
+    const boxInfoPanel = document.getElementById('boxInfoPanel');
+    const boxInfoType = document.getElementById('boxInfoType');
+    const boxInfoText = document.getElementById('boxInfoText');
+    const boxInfoSave = document.getElementById('boxInfoSave');
+    const boxInfoCancel = document.getElementById('boxInfoCancel');
+    
+    // Canvas context
+    const imgCtx = imageCanvas.getContext('2d');
+    const ocrCtx = ocrCanvas.getContext('2d');
+    const drawCtx = drawingCanvas.getContext('2d');
+    
+    // Store annotations
+    let annotations = [];
+    let ocrBoxes = [];
+    let dimensionLinks = [];
+    let selectedBox = null;
+    let linkSource = null;
+    
+    // Drawing state
+    let isDrawing = false;
+    let startX = 0;
+    let startY = 0;
+    let currentTool = 'select';
+    
+    // Colors for different types
+    const colors = {
+        dimension: '#ff00ff',
+        material: '#009999',
+        room: '#00ff00',
+        door: '#0000ff',
+        window: '#ffff00',
+        wall: '#ff0000'
+    };
+    
+    // Set active tool
+    function setActiveTool(tool) {
+        currentTool = tool;
+        document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+        document.getElementById(`${tool}Tool`).classList.add('active');
+        
+        // Update cursor style
+        if (tool === 'draw') {
+            drawingCanvas.style.cursor = 'crosshair';
+        } else if (tool === 'select' || tool === 'link') {
+            drawingCanvas.style.cursor = 'pointer';
+        } else if (tool === 'delete') {
+            drawingCanvas.style.cursor = 'not-allowed';
+        } else {
+            drawingCanvas.style.cursor = 'default';
+        }
+        
+        // Reset states
+        hideBoxInfo();
+        selectedBox = null;
+        linkSource = null;
+        redrawCanvas();
+    }
+    
+    // Show/hide box info panel
+    function showBoxInfo(box, x, y) {
+        boxInfoType.value = box.type || 'dimension';
+        boxInfoText.value = box.text || '';
+        boxInfoPanel.style.display = 'block';
+        boxInfoPanel.style.left = `${x}px`;
+        boxInfoPanel.style.top = `${y}px`;
+    }
+    
+    function hideBoxInfo() {
+        boxInfoPanel.style.display = 'none';
+    }
+    
+    // Check if a point is inside a box
+    function isPointInBox(x, y, box) {
+        return (
+            x >= box.x && 
+            x <= box.x + box.width && 
+            y >= box.y && 
+            y <= box.y + box.height
+        );
+    }
+    
+    // Get a box that contains a point
+    function getBoxAt(x, y) {
+        // First check user annotations
+        for (let i = annotations.length - 1; i >= 0; i--) {
+            if (isPointInBox(x, y, annotations[i])) {
+                return { box: annotations[i], index: i, source: 'user' };
+            }
+        }
+        
+        // Then check OCR boxes
+        for (let i = ocrBoxes.length - 1; i >= 0; i--) {
+            if (isPointInBox(x, y, ocrBoxes[i])) {
+                return { box: ocrBoxes[i], index: i, source: 'ocr' };
+            }
+        }
+        
+        return null;
+    }
+    
+    // Draw bounding box
+    function drawBox(ctx, box, isSelected = false) {
+        const color = colors[box.type] || '#ff00ff';
+        
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isSelected ? 3 : 2;
+        ctx.strokeRect(box.x, box.y, box.width, box.height);
+        
+        // Add semi-transparent fill if selected
+        if (isSelected) {
+            ctx.fillStyle = `${color}33`; // 20% opacity
+            ctx.fillRect(box.x, box.y, box.width, box.height);
+        }
+        
+        // Draw label
+        ctx.fillStyle = 'white';
+        ctx.fillRect(box.x, box.y - 20, 120, 20);
+        ctx.fillStyle = color;
+        ctx.font = '14px Arial';
+        ctx.fillText(`${box.type}: ${box.text || 'N/A'}`, box.x + 5, box.y - 5);
+    }
+    
+    // Draw dimension links
+    function drawDimensionLinks(ctx) {
+        dimensionLinks.forEach(link => {
+            ctx.strokeStyle = 'green';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
+            
+            // Draw line from dimension to wall
+            ctx.beginPath();
+            ctx.moveTo(link.dimension.x + link.dimension.width / 2, link.dimension.y + link.dimension.height / 2);
+            ctx.lineTo(link.wall.x + link.wall.width / 2, link.wall.y + link.wall.height / 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Indicate the linked area
+            ctx.strokeStyle = 'rgba(0, 200, 0, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(link.wall.x, link.wall.y, link.wall.width, link.wall.height);
+        });
+    }
+    
+    // Redraw the canvas
+    function redrawCanvas() {
+        // Clear canvas
+        ocrCtx.clearRect(0, 0, ocrCanvas.width, ocrCanvas.height);
+        drawCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        
+        // Draw OCR boxes
+        ocrBoxes.forEach(box => {
+            drawBox(ocrCtx, box, selectedBox && selectedBox.source === 'ocr' && selectedBox.box === box);
+        });
+        
+        // Draw user annotations
+        annotations.forEach(box => {
+            drawBox(drawCtx, box, selectedBox && selectedBox.source === 'user' && selectedBox.box === box);
+        });
+        
+        // Draw dimension links
+        drawDimensionLinks(ocrCtx);
+        
+        // If we're drawing a new box, draw it
+        if (isDrawing && currentTool === 'draw') {
+            drawCtx.strokeStyle = colors[document.getElementById('boxType').value] || '#ff00ff';
+            drawCtx.lineWidth = 2;
+            drawCtx.strokeRect(startX, startY, mouseX - startX, mouseY - startY);
+        }
+        
+        // If we're linking, draw the line
+        if (linkSource && currentTool === 'link') {
+            drawCtx.strokeStyle = 'green';
+            drawCtx.lineWidth = 2;
+            drawCtx.setLineDash([5, 3]);
+            drawCtx.beginPath();
+            drawCtx.moveTo(linkSource.x + linkSource.width / 2, linkSource.y + linkSource.height / 2);
+            drawCtx.lineTo(mouseX, mouseY);
+            drawCtx.stroke();
+            drawCtx.setLineDash([]);
+        }
+        
+        // Update recognized elements display
+        updateRecognizedElements();
+    }
+    
+    // Update the recognized elements panel
+    function updateRecognizedElements() {
+        const elementsDiv = document.getElementById('recognizedElements');
+        let html = '';
+        
+        // Count elements by type
+        const counts = {
+            dimension: 0,
+            material: 0,
+            room: 0,
+            door: 0,
+            window: 0,
+            wall: 0
+        };
+        
+        // Count OCR boxes
+        ocrBoxes.forEach(box => {
+            if (counts[box.type] !== undefined) {
+                counts[box.type]++;
+            }
+        });
+        
+        // Count user annotations
+        annotations.forEach(box => {
+            if (counts[box.type] !== undefined) {
+                counts[box.type]++;
+            }
+        });
+        
+        // Generate HTML
+        html += '<div class="grid grid-cols-2 gap-4">';
+        for (const [type, count] of Object.entries(counts)) {
+            html += `
+                <div class="flex items-center">
+                    <div class="w-4 h-4 mr-2" style="background-color: ${colors[type]}"></div>
+                    <span class="capitalize">${type}s: ${count}</span>
+                </div>
+            `;
+        }
+        html += '</div>';
+        
+        // Show dimension links
+        if (dimensionLinks.length > 0) {
+            html += '<div class="mt-4">';
+            html += '<h4 class="font-medium">Dimension Links</h4>';
+            html += '<ul class="list-disc pl-5">';
+            dimensionLinks.forEach((link, index) => {
+                html += `<li>Link ${index + 1}: Dimension "${link.dimension.text}" linked to Wall ${link.wall.id || index}</li>`;
+            });
+            html += '</ul>';
+            html += '</div>';
+        }
+        
+        elementsDiv.innerHTML = html;
+    }
+    
+    // Process selected box with OCR
+    async function processSelectedBox() {
+        if (!selectedBox) {
+            alert('Please select a box to process');
+            return;
+        }
+        
+        const box = selectedBox.box;
+        
+        // Get the original image data
+        const canvas = document.createElement('canvas');
+        canvas.width = box.width;
+        canvas.height = box.height;
+        const ctx = canvas.getContext('2d');
+        
+        // Copy just the selected region from the image canvas
+        ctx.drawImage(
+            imageCanvas, 
+            box.x, box.y, box.width, box.height,
+            0, 0, box.width, box.height
+        );
+        
+        // Convert canvas to blob
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        
+        // Create form data
+        const formData = new FormData();
+        formData.append('image', blob, 'selection.png');
+        formData.append('box_coordinates', JSON.stringify({ 
+            x: box.x, y: box.y, width: box.width, height: box.height 
+        }));
+        
+        try {
+            const response = await fetch('/process_selection', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to process selection');
+            }
+            
+            const result = await response.json();
+            
+            // Update the box with OCR result
+            box.text = result.text || '';
+            box.confidence = result.confidence || 0;
+            
+            // If it's a dimension, try to parse it
+            if (box.type === 'dimension' && result.text) {
+                // Look for numeric patterns like dimensions
+                const dimensionMatch = result.text.match(/(\d+(?:\.\d+)?)/g);
+                if (dimensionMatch) {
+                    box.value = parseFloat(dimensionMatch[0]);
+                    box.unit = result.text.includes('ft') ? 'ft' : 
+                               result.text.includes('m') ? 'm' : 
+                               result.text.includes('cm') ? 'cm' : '';
+                }
+            }
+            
+            // Update the display
+            redrawCanvas();
+            showBoxInfo(box, box.x, box.y);
+            
+        } catch (error) {
+            alert(`Error processing selection: ${error.message}`);
+        }
+    }
+    
+    // Save annotations to server
+    async function saveAnnotations() {
+        try {
+            const allAnnotations = {
+                ocr: ocrBoxes,
+                user: annotations,
+                links: dimensionLinks
+            };
+            
+            const response = await fetch('/save_annotations', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(allAnnotations)
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to save annotations');
+            }
+            
+            const result = await response.json();
+            alert('Annotations saved successfully!');
+            
+        } catch (error) {
+            alert(`Error saving annotations: ${error.message}`);
+        }
+    }
+    
+    // Initialize canvas and events once image is loaded
+    function initCanvas(image) {
+        // Set canvas dimensions
+        const container = document.querySelector('.canvas-container');
+        const containerWidth = container.clientWidth;
+        
+        // Calculate proportional height
+        const ratio = image.height / image.width;
+        const canvasWidth = containerWidth;
+        const canvasHeight = containerWidth * ratio;
+        
+        // Set canvas size
+        imageCanvas.width = ocrCanvas.width = drawingCanvas.width = canvasWidth;
+        imageCanvas.height = ocrCanvas.height = drawingCanvas.height = canvasHeight;
+        
+        // Set container height
+        container.style.height = `${canvasHeight}px`;
+        
+        // Draw image on canvas
+        imgCtx.drawImage(image, 0, 0, canvasWidth, canvasHeight);
+        
+        // Show interactive container
+        document.getElementById('interactiveContainer').classList.remove('hidden');
+    }
+    
+    // Mouse variables
+    let mouseX = 0;
+    let mouseY = 0;
+    
+    // Handle mouse events
+    drawingCanvas.addEventListener('mousedown', (e) => {
+        const rect = drawingCanvas.getBoundingClientRect();
+        startX = e.clientX - rect.left;
+        startY = e.clientY - rect.top;
+        
+        if (currentTool === 'draw') {
+            isDrawing = true;
+        } else if (currentTool === 'select') {
+            const boxInfo = getBoxAt(startX, startY);
+            if (boxInfo) {
+                selectedBox = boxInfo;
+                redrawCanvas();
+                showBoxInfo(boxInfo.box, e.clientX, e.clientY);
+            } else {
+                selectedBox = null;
+                hideBoxInfo();
+                redrawCanvas();
+            }
+        } else if (currentTool === 'delete') {
+            const boxInfo = getBoxAt(startX, startY);
+            if (boxInfo) {
+                if (boxInfo.source === 'user') {
+                    // Remove user annotation
+                    annotations.splice(boxInfo.index, 1);
+                } else if (boxInfo.source === 'ocr') {
+                    // Remove OCR box
+                    ocrBoxes.splice(boxInfo.index, 1);
+                }
+                
+                // Remove any dimension links involving this box
+                dimensionLinks = dimensionLinks.filter(link => 
+                    link.dimension !== boxInfo.box && link.wall !== boxInfo.box
+                );
+                
+                redrawCanvas();
+            }
+        } else if (currentTool === 'link') {
+            const boxInfo = getBoxAt(startX, startY);
+            if (boxInfo) {
+                if (!linkSource) {
+                    // Start linking if this is a dimension
+                    if (boxInfo.box.type === 'dimension') {
+                        linkSource = boxInfo.box;
+                    } else {
+                        alert('Please select a dimension as the source for linking');
+                    }
+                } else {
+                    // Complete the link if this is a wall
+                    if (boxInfo.box.type === 'wall') {
+                        dimensionLinks.push({
+                            dimension: linkSource,
+                            wall: boxInfo.box
+                        });
+                        linkSource = null;
+                    } else {
+                        alert('Please select a wall as the target for linking');
+                    }
+                }
+                redrawCanvas();
+            }
+        }
+    });
+    
+    drawingCanvas.addEventListener('mousemove', (e) => {
+        const rect = drawingCanvas.getBoundingClientRect();
+        mouseX = e.clientX - rect.left;
+        mouseY = e.clientY - rect.top;
+        
+        if (isDrawing && currentTool === 'draw') {
+            redrawCanvas();
+        } else if (linkSource && currentTool === 'link') {
+            redrawCanvas();
+        }
+    });
+    
+    drawingCanvas.addEventListener('mouseup', (e) => {
+        if (isDrawing && currentTool === 'draw') {
+            isDrawing = false;
+            
+            // Calculate box dimensions (handle negative values)
+            const x = Math.min(startX, mouseX);
+            const y = Math.min(startY, mouseY);
+            const width = Math.abs(mouseX - startX);
+            const height = Math.abs(mouseY - startY);
+            
+            // Minimum size check
+            if (width < 10 || height < 10) {
+                redrawCanvas();
+                return;
+            }
+            
+            // Add new annotation
+            const newBox = {
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+                type: document.getElementById('boxType').value,
+                text: '',
+                source: 'user'
+            };
+            
+            annotations.push(newBox);
+            selectedBox = { box: newBox, index: annotations.length - 1, source: 'user' };
+            redrawCanvas();
+            
+            // Show box info panel
+            const rect = drawingCanvas.getBoundingClientRect();
+            showBoxInfo(newBox, e.clientX, e.clientY);
+        }
+    });
+    
+    // Button event handlers
+    document.getElementById('selectTool').addEventListener('click', () => setActiveTool('select'));
+    document.getElementById('drawTool').addEventListener('click', () => setActiveTool('draw'));
+    document.getElementById('linkTool').addEventListener('click', () => setActiveTool('link'));
+    document.getElementById('deleteTool').addEventListener('click', () => setActiveTool('delete'));
+    document.getElementById('clearAllTool').addEventListener('click', () => {
+        if (confirm('Are you sure you want to clear all annotations?')) {
+            annotations = [];
+            dimensionLinks = [];
+            selectedBox = null;
+            hideBoxInfo();
+            redrawCanvas();
+        }
+    });
+    
+    document.getElementById('processBoxTool').addEventListener('click', processSelectedBox);
+    document.getElementById('saveAnnotations').addEventListener('click', saveAnnotations);
+    
+    // Box info panel event handlers
+    boxInfoSave.addEventListener('click', () => {
+        if (selectedBox) {
+            selectedBox.box.type = boxInfoType.value;
+            selectedBox.box.text = boxInfoText.value;
+            hideBoxInfo();
+            redrawCanvas();
+        }
+    });
+    
+    boxInfoCancel.addEventListener('click', () => {
+        hideBoxInfo();
+    });
+    
+    // Form submission handler
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const form = e.target;
+        const fileInput = document.getElementById('imageInput');
+        const filterCheckbox = document.getElementById('filterDimensions');
+        const loading = document.querySelector('.loading');
+        const errorMessage = document.getElementById('errorMessage');
+        
+        if (!fileInput.files.length) {
+            errorMessage.textContent = 'Please select an image file';
+            errorMessage.classList.remove('hidden');
+            return;
+        }
+        
+        const formData = new FormData();
+        formData.append('image', fileInput.files[0]);
+        formData.append('filter_dimensions', filterCheckbox.checked);
+        formData.append('detect_bboxes', 'true');
+        
+        try {
+            loading.classList.remove('hidden');
+            errorMessage.classList.add('hidden');
+            
+            const response = await fetch('/extract_text', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Failed to process image');
+            }
+            
+            // Load the image
+            const image = new Image();
+            image.onload = () => {
+                initCanvas(image);
+                loading.classList.add('hidden');
+            };
+            image.src = URL.createObjectURL(fileInput.files[0]);
+            
+            // Get OCR results
+            const data = await response.json();
+            
+            // Process OCR boxes
+            if (data.dimension_boxes && data.dimension_boxes.length > 0) {
+                ocrBoxes = data.dimension_boxes.map(box => ({
+                    x: box.bbox.x,
+                    y: box.bbox.y,
+                    width: box.bbox.width,
+                    height: box.bbox.height,
+                    type: box.type || 'dimension',
+                    text: box.text || '',
+                    confidence: box.confidence || 0,
+                    source: 'ocr'
+                }));
+                
+                // Draw OCR boxes once image is loaded
+                image.onload = () => {
+                    initCanvas(image);
+                    redrawCanvas();
+                    loading.classList.add('hidden');
+                };
+            }
+            
+        } catch (error) {
+            loading.classList.add('hidden');
+            errorMessage.textContent = error.message;
+            errorMessage.classList.remove('hidden');
+        }
+    });
+    
+    // Process linked dimensions
+    async function processLinkedDimensions() {
+        if (dimensionLinks.length === 0) {
+            alert('No dimension links to process. Please link dimensions to walls first.');
+            return;
+        }
+        
+        try {
+            const response = await fetch('/process_linked_dimensions', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    links: dimensionLinks
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Failed to process dimension links');
+            }
+            
+            const result = await response.json();
+            
+            if (result.success) {
+                // Display results
+                const resultsDiv = document.getElementById('linkedDimensionsResults');
+                const contentDiv = document.getElementById('linkedResultsContent');
+                
+                // Build HTML for the results
+                let html = '<div class="space-y-4">';
+                
+                // Walls section
+                html += '<div class="border-t pt-2 mt-2">';
+                html += '<h4 class="font-medium">Calculated Wall Properties</h4>';
+                html += '<div class="grid grid-cols-3 gap-2 mt-2">';
+                
+                for (const [wallId, wall] of Object.entries(result.results.walls)) {
+                    html += `
+                        <div class="bg-white p-2 rounded shadow-sm">
+                            <div class="font-medium">${wallId}</div>
+                            <div>Length: ${wall.length.toFixed(2)} m</div>
+                            <div>Height: ${wall.height.toFixed(2)} m</div>
+                            <div>Area: ${wall.area.toFixed(2)} m²</div>
+                            <div>Volume: ${wall.volume.toFixed(2)} m³</div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                html += '</div>';
+                
+                // Dimensions section
+                html += '<div class="border-t pt-2 mt-2">';
+                html += '<h4 class="font-medium">Parsed Dimensions</h4>';
+                html += '<div class="grid grid-cols-3 gap-2 mt-2">';
+                
+                for (const [dimId, dim] of Object.entries(result.results.dimensions)) {
+                    html += `
+                        <div class="bg-white p-2 rounded shadow-sm">
+                            <div class="font-medium">${dimId}</div>
+                            <div>Original Text: ${dim.text || 'N/A'}</div>
+                            <div>Parsed Value: ${dim.value.toFixed(2)} m</div>
+                            <div>Original Unit: ${dim.original_unit}</div>
+                        </div>
+                    `;
+                }
+                
+                html += '</div>';
+                html += '</div>';
+                
+                html += '</div>';
+                
+                contentDiv.innerHTML = html;
+                resultsDiv.classList.remove('hidden');
+            }
+            
+        } catch (error) {
+            alert(`Error processing dimension links: ${error.message}`);
+        }
+    }
+    
+    // Add the event listener for the process links button
+    document.getElementById('processLinksTool').addEventListener('click', processLinkedDimensions);
+    
+    // Initialize with select tool active
+    setActiveTool('select');
+</script>
+{% endblock %} 
